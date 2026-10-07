@@ -111,28 +111,36 @@ async def admin_receive_code(message: Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_video)
     await message.answer(f"🎬 Kod qabul qilindi: {code}.\n\nEndi ushbu kodga biriktiriladigan Kino videosini yuboring:")
 
+# --- ADMIN KINONI KANAL ORQALI SAQLASH FUNKSIYASI ---
+
 @dp.message(AdminStates.waiting_for_video, F.from_user.id == ADMIN_ID)
 async def admin_receive_video(message: Message, state: FSMContext):
-    file_id = None
-    if message.video:
-        file_id = message.video.file_id
-    elif message.document:
-        file_id = message.document.file_id
-
-    if not file_id:
-        await message.answer("⚠️ Iltimos, faqat video yoki fayl formatida kino yuboring!")
+    # Admin kinoni o'z maxfiy kanalidan forward qilib yuborishi kerak
+    if not message.forward_from_chat:
+        await message.answer(
+            "⚠️ Xatolik! Kinoni to'g'ridan-to'g'ri bu yerga yuklamang (Server o'chib qoladi).\n\n"
+            "👉 Avval kinoni o'zingiz ochgan maxfiy kanalga yuklang, keyin o'sha kanaldagi kinoni bu botga Forward (Yo'naltirish) qilib yuboring!"
+        )
         return
+
+    # Kanaldagi chat ID va xabar ID sini olamiz
+    channel_id = message.forward_from_chat.id
+    message_id = message.forward_from_message_id
+    
+    # Bazada ikkala ma'lumotni qo'shib saqlaymiz (masalan: "-10012345678:45")
+    combined_id = f"{channel_id}:{message_id}"
+
     user_data = await state.get_data()
     movie_code = user_data['movie_code']
     
-    if add_movie_to_db(movie_code, file_id):
-        await message.answer(f"✅ Muvaffaqiyatli saqlash!\n🎬 Kino kodi: {movie_code}", reply_markup=get_admin_keyboard())
+    if add_movie_to_db(movie_code, combined_id):
+        await message.answer(f"✅ Muvaffaqiyatli saqlash!\n🎬 Kino kodi: {movie_code}\n📌 Kino kanaldan ulandi.", reply_markup=get_admin_keyboard())
     else:
         await message.answer("❌ Bazaga saqlashda xatolik yuz berdi.", reply_markup=get_admin_keyboard())
         
     await state.clear()
 
-# --- FOYDALANUVCHILAR UCHUN QIDIRUV ---
+# --- FOYDALANUVCHILAR UCHUN QIDIRUV (FORWARD USULI) ---
 
 @dp.message(F.text)
 async def search_movie(message: Message):
@@ -142,11 +150,23 @@ async def search_movie(message: Message):
     if file_id:
         await message.answer("🔍 Kino topildi! Yuklanmoqda, iltimos kuting...")
         try:
-            await message.answer_document(document=file_id, caption=f"🎬 Kino kodi: {code}")
-        except Exception:
-            await message.answer("❌ Kinoni yuborishda xatolik yuz berdi.")
+            # 💡 Kinoni server xotirasiga yuklamasdan, to'g'ridan-to'g'ri forward qilamiz
+            # file_id ichida aslida kanal_id va message_id saqlangan bo'ladi (split orqali ajratamiz)
+            if ":" in file_id:
+                chat_id, msg_id = file_id.split(":")
+                await bot.forward_message(
+                    chat_id=message.chat.id,
+                    from_chat_id=int(chat_id),
+                    message_id=int(msg_id)
+                )
+            else:
+                # Agar eski matnli file_id qolib ketgan bo'lsa, document sifatida yuborishga urinadi
+                await message.answer_document(document=file_id, caption=f"🎬 Kino kodi: {code}")
+        except Exception as e:
+            print(f"Yuborishda xatolik: {e}")
+            await message.answer("❌ Kinoni yuborishda xatolik yuz berdi. Admin kanalni tekshirishi kerak.")
     else:
-        await message.answer("⚠️ Kechirasiz, bu kod bilan hech qanday kino topilmadi. Kodni to'g'ri kiritganingizni tekshiring.")
+        await message.answer("⚠️ Kechirasiz, bu kod bilan hech qanday kino topilmadi.")
 
 # --- ISHGA TUSHIRISH ---
 async def main():
