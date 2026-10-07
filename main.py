@@ -142,7 +142,7 @@ async def search_movie(message: Message):
     if file_id:
         await message.answer("🔍 Kino topildi! Yuklanmoqda, iltimos kuting...")
         try:
-            await message.answer_video(video=file_id, caption=f"🎬 Kino kodi: {code}")
+            await message.answer_document(document=file_id, caption=f"🎬 Kino kodi: {code}")
         except Exception:
             await message.answer("❌ Kinoni yuborishda xatolik yuz berdi.")
     else:
