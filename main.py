@@ -16,7 +16,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Asosiy eng bosh admin ID si (Ushbu adminni hech kim ban qilolmaydi yoki o'chirolmaydi)
-Admin_ID_LIST = [int(i) for i in os.getenv("ADMIN_ID", "").split(",") if i.strip().isdigit()]
+ADMIN_ID_LIST = [int(i) for i in os.getenv("ADMIN_ID", "").split(",") if i.strip().isdigit()]
 SUPER_ADMIN_ID = ADMIN_ID_LIST[0] if ADMIN_ID_LIST else 0
 
 # --- 2. RENDER UCHUN FLASK SERVER ---
