@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 
-# --- 1. .ENV FAYLIDAGI MAXFIY MA'LUMOTLARNI YUKLASH ---
+# --- 1. .ENV FAYLIDAGI MA'LUMOTLARNI YUKLASH ---
 load_dotenv()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -32,7 +32,7 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- 3. MA'LUMOTLAR BAZASI (SQLITE) STRUKTURASI ---
+# --- 3. MA'LUMOTLAR BAZASI (SQLITE) FUNKSIYALARI ---
 DB_NAME = "movies.db"
 
 def init_db():
@@ -64,9 +64,9 @@ def get_movie_from_db(code):
     cursor.execute("SELECT file_id FROM movies WHERE movie_code = ?", (code,))
     result = cursor.fetchone()
     conn.close()
-    return result if result else None
+    return result[0] if result else None
 
-# --- 4. BOT O'ZGARUVCHILARI VA FSM (HOLATLAR) ---
+# --- 4. BOT SOZLAMALARI ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -80,7 +80,7 @@ def get_admin_keyboard():
         resize_keyboard=True
     )
 
-# --- 5. BOT LOGIKASI VA KOMANDALAR ---
+# --- 5. BOT LOGIKASI ---
 
 @dp.message(CommandStart())
 async def start_cmd(message: Message):
@@ -93,54 +93,49 @@ async def start_cmd(message: Message):
     else:
         await message.answer(
             "👋 Salom! Kino qidiruv botiga xush kelibsiz!\n\n"
-            "🎬 Kinoni yuklab olish uchun uning kodini (masalan: 100) yuboring.",
+            "🎬 Kinoni yuklab olish uchun uning kodini (masalan: 2) yuboring.",
             reply_markup=ReplyKeyboardRemove()
         )
 
-# --- ADMIN PANEL FUNKSIYALARI ---
+# --- ADMIN PANEL: KINO QO'SHISH ---
 
 @dp.message(F.text == "➕ Yangi kino qo'shish", F.from_user.id == ADMIN_ID)
 async def admin_add_movie(message: Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_code)
-    await message.answer("🔢 Yangi kino uchun kod raqami kiriting (masalan: 105):", reply_markup=ReplyKeyboardRemove())
+    await message.answer("🔢 Yangi kino uchun kod raqami kiriting (masalan: 2):", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(AdminStates.waiting_for_code, F.from_user.id == ADMIN_ID)
 async def admin_receive_code(message: Message, state: FSMContext):
     code = message.text.strip()
     await state.update_data(movie_code=code)
     await state.set_state(AdminStates.waiting_for_video)
-    await message.answer(f"🎬 Kod qabul qilindi: {code}.\n\nEndi ushbu kodga biriktiriladigan Kino videosini yuboring:")
-
-# --- ADMIN KINONI KANAL ORQALI SAQLASH FUNKSIYASI ---
+    await message.answer(f"🎬 Kod qabul qilindi: {code}.\n\nEndi ushbu kodga biriktiriladigan Kino videosini yo'naltiring (Forward) yoki yuklang:")
 
 @dp.message(AdminStates.waiting_for_video, F.from_user.id == ADMIN_ID)
 async def admin_receive_video(message: Message, state: FSMContext):
-    # Admin kinoni o'z maxfiy kanalidan forward qilib yuborishi kerak
-    if not message.forward_from_chat:
-        await message.answer(
-            "⚠️ Xatolik! Kinoni to'g'ridan-to'g'ri bu yerga yuklamang (Server o'chib qoladi).\n\n"
-            "👉 Avval kinoni o'zingiz ochgan maxfiy kanalga yuklang, keyin o'sha kanaldagi kinoni bu botga Forward (Yo'naltirish) qilib yuboring!"
-        )
-        return
-
-    # Kanaldagi chat ID va xabar ID sini olamiz
-    channel_id = message.forward_from_chat.id
-    message_id = message.forward_from_message_id
+    file_id = None
     
-    # Bazada ikkala ma'lumotni qo'shib saqlaymiz (masalan: "-10012345678:45")
-    combined_id = f"{channel_id}:{message_id}"
+    # Videoning Telegramdagi file_id sini aniqlaymiz (xotiraga yuklamasdan)
+    if message.video:
+        file_id = message.video.file_id
+    elif message.document:
+        file_id = message.document.file_id
 
+    if not file_id:
+        await message.answer("⚠️ Iltimos, faqat video yoki fayl formatida kino yuboring!")
+        return
     user_data = await state.get_data()
     movie_code = user_data['movie_code']
     
-    if add_movie_to_db(movie_code, combined_id):
-        await message.answer(f"✅ Muvaffaqiyatli saqlash!\n🎬 Kino kodi: {movie_code}\n📌 Kino kanaldan ulandi.", reply_markup=get_admin_keyboard())
+    # Bazaga faqat shaxsiy file_id matnini saqlaymiz
+    if add_movie_to_db(movie_code, file_id):
+        await message.answer(f"✅ Muvaffaqiyatli saqlash!\n🎬 Kino kodi: {movie_code}", reply_markup=get_admin_keyboard())
     else:
         await message.answer("❌ Bazaga saqlashda xatolik yuz berdi.", reply_markup=get_admin_keyboard())
         
     await state.clear()
 
-# --- FOYDALANUVCHILAR UCHUN QIDIRUV (FORWARD USULI) ---
+# --- FOYDALANUVCHILAR UCHUN QIDIRUV (FILE ID ORQALI YUBORISH) ---
 
 @dp.message(F.text)
 async def search_movie(message: Message):
@@ -150,29 +145,22 @@ async def search_movie(message: Message):
     if file_id:
         await message.answer("🔍 Kino topildi! Yuklanmoqda, iltimos kuting...")
         try:
-            # 💡 Kinoni server xotirasiga yuklamasdan, to'g'ridan-to'g'ri forward qilamiz
-            # file_id ichida aslida kanal_id va message_id saqlangan bo'ladi (split orqali ajratamiz)
-            if ":" in file_id:
-                chat_id, msg_id = file_id.split(":")
-                await bot.forward_message(
-                    chat_id=message.chat.id,
-                    from_chat_id=int(chat_id),
-                    message_id=int(msg_id)
-                )
-            else:
-                # Agar eski matnli file_id qolib ketgan bo'lsa, document sifatida yuborishga urinadi
-                await message.answer_document(document=file_id, caption=f"🎬 Kino kodi: {code}")
+            # 🚀 Kinoni file_id orqali Hujjat (Document) ko'rinishida yuboramiz (Cheklov 2 GB)
+            await message.answer_document(document=file_id, caption=f"🎬 Kino kodi: {code}")
         except Exception as e:
-            print(f"Yuborishda xatolik: {e}")
-            await message.answer("❌ Kinoni yuborishda xatolik yuz berdi. Admin kanalni tekshirishi kerak.")
+            # Agar video sifatida yuborishni sinab ko'rmoqchi bo'lsa
+            try:
+                await message.answer_video(video=file_id, caption=f"🎬 Kino kodi: {code}")
+            except Exception as ex:
+                await message.answer("❌ Kinoni yuborishda xatolik yuz berdi. Fayl yuklanmadi.")
     else:
-        await message.answer("⚠️ Kechirasiz, bu kod bilan hech qanday kino topilmadi.")
+        await message.answer("⚠️ Kechirasiz, bu kod bilan hech qanday kino topilmadi. Kodni to'g'ri kiritganingizni tekshiring.")
 
 # --- ISHGA TUSHIRISH ---
 async def main():
     basicConfig(level=INFO)
-    init_db()       # SQLite bazani faollashtirish
-    keep_alive()    # Render server uchun veb portni yoqish
+    init_db()       
+    keep_alive()    
     print("Kino bot muvaffaqiyatli ishga tushdi...")
     await dp.start_polling(bot)
 
