@@ -380,12 +380,12 @@ async def ban_user_finish(message: Message, state: FSMContext):
     await state.clear()
 
 
-# --- FOYDALANUVCHILAR UCHUN KINO QIDIRUV ---
+# --- FOYDALANUVCHILAR UCHUN KINO QIDIRUV (MUALLIFSIZ NUSXA OLISH) ---
 @dp.message(F.text)
 async def search_movie(message: Message):
     user_id = message.from_user.id
-    if get_user_status(user_id) == "banned":
-        return
+    if get_user_status(user_id) == "banned": return
+
     unsubscribed = await check_subscription(user_id)
     if unsubscribed:
         ikb = InlineKeyboardMarkup(inline_keyboard=[
@@ -393,18 +393,27 @@ async def search_movie(message: Message):
         ] + [[InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_sub")]])
         await message.answer("⚠️ Botdan foydalanish uchun kanallarga a'zo bo'lish so'rovini yuborishingiz shart:", reply_markup=ikb)
         return
+
     code = message.text.strip()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT channel_id, message_id FROM movies WHERE movie_code = ?", (code,))
     movie_data = cursor.fetchone()
     conn.close()
+
     if movie_data:
         channel_id, message_id = movie_data
         await message.answer("🔍 Kino topildi! Yo'naltirilmoqda...")
         try:
-            await bot.forward_message(chat_id=message.chat.id, from_chat_id=int(channel_id), message_id=int(message_id))
-        except Exception:
+            # 🚀 forward_message o'rniga copy_message ishlatamiz.
+            # Bu "Uzatilgan" (Forwarded) yozuvini butunlay o'chirib yuboradi.
+            await bot.copy_message(
+                chat_id=message.chat.id,
+                from_chat_id=int(channel_id),
+                message_id=int(message_id)
+            )
+        except Exception as e:
+            print(f"Xatolik: {e}")
             await message.answer("❌ Kinoni uzatishda xatolik. Bot kanalda admin ekanini tekshiring.")
     else:
         await message.answer("⚠️ Kechirasiz, bu kod bilan hech qanday kino topilmadi.")
